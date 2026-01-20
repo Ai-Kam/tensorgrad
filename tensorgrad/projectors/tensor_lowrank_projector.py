@@ -2,22 +2,26 @@ import torch
 import json
 import os
 from tensorly.decomposition import tucker
-from tensorly import tenalg 
+from tensorly import tenalg
 from torch.autograd.profiler import record_function
-
 from tensorly.tenalg.core_tenalg.n_mode_product import multi_mode_dot
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class TensorGradLowRankProjector:
     def __init__(
-        self, 
-        rank, 
+        self,
+        rank,
         update_gap_scheduler,  # Instance of UpdateGapScheduler
-        verbose=False, 
-        scale=1.0, 
-        warm_restart=False,
-        n_iter_max=10,
-        svd_type="truncated_svd", # "truncated_svd", "randomized_svd"
+        verbose: bool = False,
+        scale: float = 1.0,
+        warm_restart: bool = False,
+        n_iter_max: int = 10,
+        svd_type: str = "truncated_svd",  # "truncated_svd", "randomized_svd"
+        empty_cache_tucker: bool = False,
     ):
         """
         Args:
@@ -40,10 +44,21 @@ class TensorGradLowRankProjector:
         self.num_updates = 0
         self.num_steps = 0
         self._rank_validated = False
-        self.svd_type = svd_type 
+        self.svd_type = svd_type
+        # When True, allow caller (e.g., SpHealCast) to request
+        # torch.cuda.empty_cache() around Tucker decomposition only at
+        # projector reconstruction time (according to update_gap).
+        self.empty_cache_tucker = bool(empty_cache_tucker)
         
         if self.verbose:
-            print(f"TensorGradLowRankProjector initialized with rank={self.rank}, scale={self.scale}, warm_restart={self.warm_restart}, n_iter_max={self.n_iter_max}, svd_type={self.svd_type}")
+            logger.debug(
+                "TensorGradLowRankProjector initialized with rank=%s, scale=%f, warm_restart=%s, n_iter_max=%d, svd_type=%s",
+                str(self.rank),
+                float(self.scale),
+                self.warm_restart,
+                self.n_iter_max,
+                self.svd_type,
+            )
         
     def should_update_projector(self, iter):
         return self.update_gap_scheduler.should_update(iter)
@@ -79,9 +94,13 @@ class TensorGradLowRankProjector:
         
         # Validate rank format if not done yet
         self._validate_rank(self.rank, matrix.shape)
-        
-        # Always use full precision for tucker decomposition
-        if matrix.dtype == torch.complex32:
+
+        # Always use full precision dtypes for tucker decomposition
+        # - real low-precision (float16/bfloat16) → float32
+        # - complex low-precision (complex32) → complex64
+        if matrix.dtype in (torch.float16, torch.bfloat16):
+            matrix = matrix.to(torch.float32)
+        elif matrix.dtype == torch.complex32:
             matrix = matrix.to(torch.complex64)
             
             
@@ -102,18 +121,41 @@ class TensorGradLowRankProjector:
             init = "svd"
             
         try:
+            use_empty_cache = bool(getattr(self, "empty_cache_tucker", False))
+            # Optionally clear CUDA cache before running Tucker to mitigate
+            # allocator fragmentation at projector reconstruction time.
+            if use_empty_cache and torch.cuda.is_available():
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    logger.debug("TensorGradLowRankProjector: empty_cache before Tucker failed", exc_info=True)
             _, factors = tucker(matrix, rank=self.rank, init=init, n_iter_max=self.n_iter_max, svd=self.svd_type)
-            torch.cuda.empty_cache()
+            if use_empty_cache and torch.cuda.is_available():
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    logger.debug("TensorGradLowRankProjector: empty_cache after Tucker failed", exc_info=True)
         except Exception as e:
             if self.verbose:
                 print(f"Tucker decomposition failed with warm start, trying again with SVD init: {str(e)}")
-            # lets try again 
+            # lets try again
             try:
+                use_empty_cache = bool(getattr(self, "empty_cache_tucker", False))
+                if use_empty_cache and torch.cuda.is_available():
+                    try:
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        logger.debug("TensorGradLowRankProjector: empty_cache before Tucker retry failed", exc_info=True)
                 matrix = matrix + 1e-8 * torch.randn_like(matrix, dtype=matrix.dtype)  # Add noise for stability
-                _, factors = tucker(matrix, rank=self.rank, init="svd", n_iter_max=self.n_iter_max*2, svd='randomized_svd') # try again
+                _, factors = tucker(matrix, rank=self.rank, init="svd", n_iter_max=self.n_iter_max * 2, svd="randomized_svd")  # try again
             except Exception as e:
                 raise e
-        torch.cuda.empty_cache()
+        use_empty_cache = bool(getattr(self, "empty_cache_tucker", False))
+        if use_empty_cache and torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                logger.debug("TensorGradLowRankProjector: empty_cache after Tucker (final) failed", exc_info=True)
         
         # Convert factors to half precision if mixed precision is enabled
         factors = [f.to(original_dtype) for f in factors]
@@ -171,7 +213,7 @@ class TensorGradLowRankProjector:
         if self._rank_validated:
             return
         if self.verbose:
-            print(f"Validating rank: {rank}")
+            logger.debug("Validating rank=%s for matrix_shape=%s", str(rank), tuple(matrix_shape))
 
         if isinstance(rank, float):
             if not (0 < rank < 1):
@@ -218,8 +260,7 @@ class TensorGradLowRankProjector:
             raise ValueError(f"Unsupported rank format: {rank}. Must be float, positive int, or list of ints.")
         
         if self.verbose:
-            print(f"Validated rank: {self.rank}")
-            print(f"Matrix shape: {matrix_shape}")
+            logger.debug("Validated rank=%s for matrix_shape=%s", self.rank, matrix_shape)
         self._rank_validated = True
         # what is the total percentage of params in rank vs matrix_shape?
         self.rank_percentage = sum(self.rank) / sum(matrix_shape)

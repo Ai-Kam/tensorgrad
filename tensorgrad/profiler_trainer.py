@@ -221,7 +221,7 @@ class Trainer:
             ) as prof:
             
             for epoch in range(self.n_epochs):
-                torch.cuda.empty_cache()
+                # torch.cuda.empty_cache()  # disabled for SpHealCast integration
                 #prof.step()
                 train_err, avg_loss, avg_lasso_loss, epoch_train_time =\
                     self.train_one_epoch(epoch, train_loader, training_loss, prof)
@@ -233,7 +233,7 @@ class Trainer:
                 )
                 if self.eval_interval > 0 and epoch % self.eval_interval == 0:
                     print(f"Evaluating at epoch {epoch}")
-                    torch.cuda.empty_cache()
+                    # torch.cuda.empty_cache()  # disabled for SpHealCast integration
                     # evaluate and gather metrics across each loader in test_loaders
                     eval_metrics = self.evaluate_all(epoch=epoch,
                                                     eval_losses=eval_losses,
@@ -245,7 +245,7 @@ class Trainer:
                         if eval_metrics[save_best] < best_metric_value:
                             best_metric_value = eval_metrics[save_best]
                             self.checkpoint(save_dir)
-                    torch.cuda.empty_cache()
+                    # torch.cuda.empty_cache()  # disabled for SpHealCast integration
 
                 # save checkpoint if save_every and save_best is not set
                 if self.save_every is not None:

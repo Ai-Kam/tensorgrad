@@ -7,9 +7,13 @@ from torch import nn
 from torch.optim import Optimizer
 from torch.autograd.profiler import record_function
 import numpy as np
+import logging
 
 # Import your utility function that returns projectors.
 from .projectors.projector_utils import get_projector
+
+
+logger = logging.getLogger(__name__)
 
 class TensorGRaD(Optimizer):
     """
@@ -80,9 +84,9 @@ class TensorGRaD(Optimizer):
         self.reset_sparse_optim_state = True
 
         if enforce_full_complex_precision:
-            print("### Using TensorGRaD with full complex precision for states ###")
+            logger.debug("Using TensorGRaD with full complex precision for states")
         else:
-            print('#### Running with TensorGRaD ####')
+            logger.debug("Running with TensorGRaD")
 
     def _adam_update(self, grad, exp_avg, exp_avg_sq, beta1, beta2, eps, step):
         """Helper method to compute Adam update for a single gradient.
@@ -172,7 +176,11 @@ class TensorGRaD(Optimizer):
                             state["sparse_is_first"] = True
                         else:
                             state["sparse_is_first"] = False
-                        print(f"First projector is sparse: {state['sparse_is_first']} and second is low-rank: {not state['sparse_is_first']}")
+                        logger.debug(
+                            "First projector is sparse: %s and second is low-rank: %s",
+                            state["sparse_is_first"],
+                            not state["sparse_is_first"],
+                        )
                     
                     if grad.ndim == 5: # if complex tensor is stored as 2 real tensors
                         grad = torch.view_as_complex(grad)
@@ -199,7 +207,7 @@ class TensorGRaD(Optimizer):
                             # 3) now project that residual for the second branch
                             second_grad = state["second_proj"].project(grad, state["step"])
                         grad = None
-                        torch.cuda.empty_cache()
+                        # torch.cuda.empty_cache()  # disabled for SpHealCast integration
 
                 # --- Initialize Adam State Buffers ---
                 if "rank" in group:
@@ -217,8 +225,12 @@ class TensorGRaD(Optimizer):
                         else:
                             state["sparse_ratio"] = second_grad.numel() / state["total_params"]
                             state["rank"] = first_grad.numel() / state["total_params"]
-                        print(f"Total params: {state['total_params']}")
-                        print(f"Sparse ratio: {state['sparse_ratio']} and rank: {state['rank']}")
+                        logger.debug(
+                            "TensorGRaD param stats: total_params=%d sparse_ratio=%f rank=%f",
+                            state["total_params"],
+                            state["sparse_ratio"],
+                            state["rank"],
+                        )
                     else:
                         if group.get('reset_sparse_optimizer_states', False):
                             # check if projector has attribute should_update and is True
@@ -261,7 +273,12 @@ class TensorGRaD(Optimizer):
                                 lambda_sparse = state["sparse_ratio"] / (state["rank"] + 1e-12)  # Add eps to avoid div by 0
                             
                             state["lambda_sparse"] = lambda_sparse
-                            print(f"Initialized lambda_sparse={lambda_sparse:.4f} for parameter shape {p.shape} ({'provided' if group.get('lambda_sparse', None) is not None else 'computed'})")
+                            logger.debug(
+                                "Initialized lambda_sparse=%f for parameter shape %s (%s)",
+                                float(lambda_sparse),
+                                tuple(p.shape),
+                                "provided" if group.get("lambda_sparse", None) is not None else "computed",
+                            )
 
                         
                         if state["sparse_is_first"]:
@@ -288,7 +305,7 @@ class TensorGRaD(Optimizer):
                         
                         norm_grad = combined
                         del combined
-                        torch.cuda.empty_cache()
+                        # torch.cuda.empty_cache()  # disabled for SpHealCast integration
                 else:
                     # Standard Adam update: use the helper method
                     norm_grad, step_size = self._adam_update(
@@ -307,7 +324,7 @@ class TensorGRaD(Optimizer):
                 p.add_(norm_grad)
                 
                 del norm_grad  # Free memory immediately
-                torch.cuda.empty_cache()
+                # torch.cuda.empty_cache()  # disabled for SpHealCast integration
                 if group["weight_decay"] > 0.0:
                     p.add_(p, alpha=(-group["lr"] * group["weight_decay"]))
         

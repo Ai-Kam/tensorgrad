@@ -1,6 +1,10 @@
 import torch
 from torch.autograd.profiler import record_function
 import numpy as np
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 class TensorGradUnstructuredProjector:
     """
@@ -48,9 +52,13 @@ class TensorGradUnstructuredProjector:
         self._orig_shape = None
         self._indices = None
         self._last_iter = -1
-        
-        print(f"Update gap scheduler: {self.update_gap_scheduler}")
-        print(f"UnstructuredSparseProjector initialized with sparse_ratio={self.sparse_ratio}, sparse_type={self.sparse_type}, scale_by_mask_ratio={self.scale_by_mask_ratio}")
+        logger.debug(
+            "UnstructuredSparseProjector: update_gap_scheduler=%s sparse_ratio=%f sparse_type=%s scale_by_mask_ratio=%s",
+            self.update_gap_scheduler,
+            self.sparse_ratio,
+            self.sparse_type,
+            self.scale_by_mask_ratio,
+        )
         
     def should_update_projector(self, iteration):
         """Check if the projector indices should be updated in this iteration"""
@@ -196,7 +204,7 @@ class TensorGradUnstructuredProjector:
             self._indices = idx.sort().values
             
             del idx
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()  # disabled for SpHealCast integration
 
             # Possibly compute scaling factor to preserve total norm
             if self.scale_by_mask_ratio:

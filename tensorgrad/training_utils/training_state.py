@@ -58,7 +58,7 @@ def load_training_state(save_dir: Union[str, Path],
     if isinstance(save_dir, str):
         save_dir = Path(save_dir)
     
-    torch.cuda.empty_cache()
+    # torch.cuda.empty_cache()  # disabled for SpHealCast integration
 
     if distributed:
         device_id = dist.get_rank()

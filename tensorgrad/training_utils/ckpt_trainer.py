@@ -210,7 +210,7 @@ class CheckpointTrainer:
         for epoch in range(self.start_epoch, self.n_epochs):
             train_err, avg_loss, avg_lasso_loss, epoch_train_time =\
                   self.train_one_epoch(epoch, train_loader, training_loss)
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()  # disabled for SpHealCast integration
             epoch_metrics = dict(
                 train_err=train_err,
                 avg_loss=avg_loss,
@@ -229,7 +229,7 @@ class CheckpointTrainer:
                 )
 
             if epoch % self.eval_interval == 0:
-                torch.cuda.empty_cache()
+                # torch.cuda.empty_cache()  # disabled for SpHealCast integration
                 # evaluate and gather metrics across each loader in test_loaders
                 eval_metrics = self.evaluate_all(eval_losses=eval_losses,
                                                 test_loaders=test_loaders)
@@ -243,7 +243,7 @@ class CheckpointTrainer:
                     if eval_metrics[save_best] < best_metric_value:
                         best_metric_value = eval_metrics[save_best]
                         self.checkpoint(save_dir)
-                torch.cuda.empty_cache()
+                # torch.cuda.empty_cache()  # disabled for SpHealCast integration
             
             # commit wandb step
             if self.wandb_log:
@@ -289,7 +289,7 @@ class CheckpointTrainer:
         self.n_samples = 0
 
         for idx, sample in enumerate(train_loader):
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()  # disabled for SpHealCast integration
             loss = self.train_one_batch(idx, sample, training_loss)
             loss.backward()
 

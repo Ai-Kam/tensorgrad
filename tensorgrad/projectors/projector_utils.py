@@ -6,7 +6,7 @@ The projectors are responsible for transforming gradients into more memory-effic
 through various decomposition techniques:
 
 1. Low-rank projectors: Based on Tucker decomposition for tensors or SVD for matrices
-2. Structured sparse projectors: Apply sparsity along tensor dimensions 
+2. Structured sparse projectors: Apply sparsity along tensor dimensions
 3. Unstructured sparse projectors: Apply element-wise sparsity across the entire tensor
 
 The module also provides utilities for scheduling when to update projections during training.
@@ -18,6 +18,10 @@ from .tensor_sparse_projector import TensorGradSparseProjector
 from ..projectors.tensor_unstructured_sparse_projector import TensorGradUnstructuredProjector
 import matplotlib.pyplot as plt
 import copy
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_projector(
@@ -76,7 +80,7 @@ def _create_composite_projectors(group, update_gap_scheduler, matrix_only, suppo
     Returns:
         tuple: A pair of projector instances (first_projector, second_projector)
     """
-    print("### Using Composite Projector Configuration ###")
+    logger.debug("Using Composite Projector Configuration")
     
     # Get projector types and their parameters
     proj_types = [group["proj_type"], group["second_proj_type"]]
@@ -94,7 +98,11 @@ def _create_composite_projectors(group, update_gap_scheduler, matrix_only, suppo
                 size = float('inf')  # Default case
             return size
         except (ValueError, TypeError) as e:
-            print(f"Warning: Error converting size parameter to float for {proj_type}: {e}")
+            logger.debug(
+                "Error converting size parameter to float for %s: %s",
+                proj_type,
+                str(e),
+            )
             return float('inf')  # Return infinity as fallback
     
     # Get sizes for both projectors
@@ -106,11 +114,18 @@ def _create_composite_projectors(group, update_gap_scheduler, matrix_only, suppo
             if sizes[1] < sizes[0]:
                 proj_types = proj_types[::-1]
                 prefixes = prefixes[::-1]
-                print("    => Swapping projectors to ensure smaller one is first")
-                print(f"    => Sizes after swap: first={sizes[1]}, second={sizes[0]}")
+                logger.debug(
+                    "Swapping projectors to ensure smaller one is first (first=%f, second=%f)",
+                    sizes[1],
+                    sizes[0],
+                )
         except Exception as e:
-            print(f"Warning: Could not compare projector sizes: {e}")
-            print(f"    => Sizes were: first={sizes[0]}, second={sizes[1]}")
+            logger.debug(
+                "Could not compare projector sizes (%s); sizes were: first=%f, second=%f",
+                str(e),
+                sizes[0],
+                sizes[1],
+            )
     
     projectors = []
     for proj_type, prefix in zip(proj_types, prefixes):
@@ -126,10 +141,10 @@ def _create_composite_projectors(group, update_gap_scheduler, matrix_only, suppo
         )
         projectors.append(proj)
         if not group.get('optimizer_type', 'adam') == 'tensorgrad_sum':
-            print(f"    => {'First' if not prefix else 'Second'} projector: {proj_type}")
+            logger.debug("%s projector: %s", "First" if not prefix else "Second", proj_type)
         else:
             # Opposite of above
-            print(f"    => {'Second' if not prefix else 'First'} projector: {proj_type}")
+            logger.debug("%s projector: %s", "Second" if not prefix else "First", proj_type)
     
     return tuple(projectors)
 
@@ -146,7 +161,7 @@ def _create_single_projector(group, update_gap_scheduler, matrix_only, support_c
     Returns:
         object: A single projector instance
     """
-    print("### Using Single Projector Configuration ###")
+    logger.debug("Using Single Projector Configuration")
     proj_type = group['proj_type']
     projector = create_projector(
         proj_type=proj_type,
@@ -156,7 +171,7 @@ def _create_single_projector(group, update_gap_scheduler, matrix_only, support_c
         support_complex=support_complex,
         prefix=""
     )
-    print(f"    => Using projector: {proj_type}")
+    logger.debug("Using projector type=%s", proj_type)
     return projector
 
 def create_projector(proj_type, group, update_gap_scheduler, matrix_only, support_complex, prefix=""):
@@ -326,6 +341,7 @@ def _create_low_rank_projector(group, update_gap_scheduler, matrix_only, support
             warm_restart=group.get('tucker_warm_restart', False),
             n_iter_max=group.get('n_iter_max_tucker', 10),
             svd_type=svd_type,
+            empty_cache_tucker=bool(group.get("tucker_empty_cache", False)),
         )
 
 class UpdateGapScheduler:
@@ -378,11 +394,16 @@ class UpdateGapScheduler:
         # Initialize the first update at iteration 0
         self.next_update = 0
         
-        # Only print gap end if not fixed
+        # Only log gap end if not fixed
         if self.mode != "fixed":
-            print(f"Update gap scheduler initialized with {self.update_gap} start, {self.update_gap_end} end, {self.mode} mode")
+            logger.debug(
+                "Update gap scheduler initialized with start=%d end=%d mode=%s",
+                self.update_gap,
+                self.update_gap_end,
+                self.mode,
+            )
         else:
-            print(f"Update gap scheduler initialized with {self.update_gap} start")
+            logger.debug("Update gap scheduler initialized with start=%d", self.update_gap)
     
     def compute_gap(self, current_iter):
         """
@@ -529,4 +550,3 @@ class UpdateGapScheduler:
         else:
             plt.show()
             
-

@@ -86,7 +86,7 @@ def load_training_state(save_dir: Union[str, Path],
     if not map_location and dist.is_initialized():
         map_location = {"cuda:0": f"cuda:{dist.get_rank()}"}
 
-    torch.cuda.empty_cache()
+    # torch.cuda.empty_cache()  # disabled for SpHealCast integration
 
     # Define paths for distributed and non-distributed formats
     save_pth = save_dir / f"{save_name}_state_dict.pt"
