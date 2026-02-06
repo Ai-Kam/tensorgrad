@@ -74,7 +74,13 @@ class TensorGradUnstructuredProjector:
                 self._orig_shape = full_grad.shape
 
             # Only update indices if necessary
-            if (self._indices is None) or self.should_update_projector(iteration):
+            # 注意:
+            # - 条件順序を誤り `(self._indices is None) or self.should_update_projector(iteration)` とすると、
+            #   初回は左側だけで True となり、UpdateGapScheduler が評価されず next_update が 0 のまま残る。
+            # - その結果、2 回目 (iteration=1) で should_update_projector が True となり、
+            #   1/2 ステップ目の連続 index 再構築および以後の更新ステップが 2/102/202... に 1 ステップずれる。
+            # - 必ず先に scheduler を評価して内部状態を進めた上で、indices の有無と合わせて更新判定を行う。
+            if self.should_update_projector(iteration) or (self._indices is None):
                 with torch.no_grad():
                     self._build_indices(full_grad)
 

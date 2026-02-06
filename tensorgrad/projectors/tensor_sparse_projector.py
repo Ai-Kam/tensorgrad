@@ -63,7 +63,13 @@ class TensorGradSparseProjector:
                 self._orig_shape = full_rank_grad.shape
 
             # Only update masks if necessary
-            if (self.masks is None) or self.should_update_projector(iteration):
+            # 注意:
+            # - 条件順序を誤り `(self.masks is None) or self.should_update_projector(iteration)` とすると、
+            #   初回は left 側だけで True になり scheduler が評価されず next_update が 0 のまま残る。
+            # - その結果、2 回目 (iteration=1) で should_update_projector が True となり、
+            #   1/2 ステップ目の連続 mask 再構築および以後の更新ステップが 2/102/202... に 1 ステップずれる。
+            # - 必ず先に scheduler を評価して内部状態を進めた上で、masks の有無と合わせて更新判定を行う。
+            if self.should_update_projector(iteration) or (self.masks is None):
                 with torch.no_grad():
                     self.masks = self._build_masks(full_rank_grad)
     

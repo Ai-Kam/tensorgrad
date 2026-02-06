@@ -1,6 +1,6 @@
 import math
 import warnings
-from typing import Callable, Iterable, Tuple, Union, List
+from typing import Callable, Dict, Iterable, Tuple, Union, List
 
 import torch
 from torch import nn
@@ -14,6 +14,12 @@ from .projectors.projector_utils import get_projector
 
 
 logger = logging.getLogger(__name__)
+
+# Optional registry used by external callers (e.g., SpHealCast) to
+# associate nn.Parameter objects with human-readable names. SpHealCast
+# populates this by id(parameter) before constructing the optimizer.
+PARAM_NAME_REGISTRY: Dict[int, str] = {}
+
 
 class TensorGRaD(Optimizer):
     """
@@ -133,6 +139,10 @@ class TensorGRaD(Optimizer):
 
         for group in self.param_groups:
             for p in group["params"]:
+                # Optional name provided by external integration (e.g., SpHealCast)
+                # via PARAM_NAME_REGISTRY. Used only for diagnostics/logging.
+                param_name = PARAM_NAME_REGISTRY.get(id(p))
+
                 if p.grad is None:
                     continue
                 grad = p.grad
@@ -169,6 +179,11 @@ class TensorGRaD(Optimizer):
                         )
                         state["first_proj"] = first_proj
                         state["second_proj"] = second_proj
+
+                        # Attach optional parameter name to projectors for logging.
+                        if param_name is not None:
+                            setattr(first_proj, "param_name", param_name)
+                            setattr(second_proj, "param_name", param_name)
                         
                         # Identify which projector is sparse vs low-rank
                         # Sparse projector has sparse_ratio attribute, low-rank has rank attribute

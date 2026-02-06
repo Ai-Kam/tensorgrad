@@ -65,7 +65,13 @@ class TensorGradLowRankProjector:
 
     def project(self, full_rank_grad, iter):
         with torch.no_grad(), record_function("### TENSOR_GRAD_PROJECT_FORWARD"):
-            if self.proj_tensor is None or self.should_update_projector(iter):
+            # 注意:
+            # - 条件順序を誤り `self.proj_tensor is None or self.should_update_projector(iter)` とすると、
+            #   初回呼び出しで UpdateGapScheduler が評価されず next_update が 0 のままになる。
+            # - その結果、2 回目の呼び出し (iter=1) でも should_update_projector が True となり、
+            #   1/2 ステップ目の連続更新および以後の更新ステップが 2/102/202... に 1 ステップずれる。
+            # - 必ず先に should_update_projector を評価し、初回も含めてスケジューラの内部状態を進める。
+            if self.should_update_projector(iter) or self.proj_tensor is None:
                 self.proj_tensor = self.get_projection_tensor(full_rank_grad)
                 self.num_updates += 1
             if self.proj_tensor[0].device != full_rank_grad.device:
@@ -91,6 +97,20 @@ class TensorGradLowRankProjector:
     def get_projection_tensor(self, weights):
         matrix = weights.data
         original_dtype = matrix.dtype
+
+        # Optional diagnostic: log which parameter tensor is being decomposed.
+        # External callers (e.g., SpHealCast) may set `self.param_name`.
+        param_name = getattr(self, "param_name", None)
+        if param_name is not None and not getattr(self, "_logged_param_info", False):
+            shape = tuple(matrix.shape)
+            msg = f"TensorGradLowRankProjector: building projector for param={param_name}, shape={shape}"
+            # SpHealCast 側の train ロガーが構成済みであればそちらに流す。
+            train_logger = logging.getLogger("train")
+            if train_logger.handlers:
+                train_logger.info(msg)
+            else:
+                logger.info(msg)
+            self._logged_param_info = True
         
         # Validate rank format if not done yet
         self._validate_rank(self.rank, matrix.shape)
